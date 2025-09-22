@@ -184,6 +184,7 @@ class VideoCallApp {
         });
         
         this.socket.on('chat-message', (data) => {
+            console.log('Chat mesajı alındı:', data.message);
             this.displayMessage(data.message, 'other');
         });
     }
@@ -285,6 +286,10 @@ class VideoCallApp {
             this.fullscreenBtn.disabled = !hasVideo;
             this.remoteFullscreenBtn.disabled = false;
             
+            // Enable chat controls
+            this.messageInput.disabled = false;
+            this.sendBtn.disabled = false;
+            
             if (hasVideo && hasAudio) {
                 this.updateStatus('Kamera ve mikrofon aktif!', 'connected');
             } else if (hasAudio && !hasVideo) {
@@ -374,12 +379,41 @@ class VideoCallApp {
         
         // Handle remote stream
         this.peerConnection.ontrack = (event) => {
-            console.log('Remote stream alındı');
-            this.remoteStream = event.streams[0];
-            this.remoteVideo.srcObject = this.remoteStream;
-            this.updateStatus('Bağlantı kuruldu!', 'connected');
-            this.updateChatStatus('Bağlı', 'connected');
-            this.isConnected = true;
+            console.log('Remote track alındı:', event.track.kind, event.track.label);
+            console.log('Event streams:', event.streams);
+            
+            if (event.streams && event.streams.length > 0) {
+                this.remoteStream = event.streams[0];
+                this.remoteVideo.srcObject = this.remoteStream;
+                
+                // Check what tracks we have
+                const videoTracks = this.remoteStream.getVideoTracks();
+                const audioTracks = this.remoteStream.getAudioTracks();
+                
+                console.log('Remote video tracks:', videoTracks.length);
+                console.log('Remote audio tracks:', audioTracks.length);
+                
+                if (videoTracks.length > 0) {
+                    console.log('Video track details:', {
+                        label: videoTracks[0].label,
+                        enabled: videoTracks[0].enabled,
+                        readyState: videoTracks[0].readyState
+                    });
+                }
+                
+                // Force video to play
+                this.remoteVideo.play().then(() => {
+                    console.log('Remote video başarıyla oynatıldı');
+                }).catch(e => {
+                    console.error('Video play hatası:', e);
+                });
+                
+                this.updateStatus('Bağlantı kuruldu!', 'connected');
+                this.updateChatStatus('Bağlı', 'connected');
+                this.isConnected = true;
+            } else {
+                console.error('Remote stream bulunamadı');
+            }
         };
         
         // Setup data channel for chat
@@ -476,12 +510,17 @@ class VideoCallApp {
         };
         
         dataChannel.onmessage = (event) => {
+            console.log('Data channel mesajı alındı:', event.data);
             this.displayMessage(event.data, 'other');
         };
         
         dataChannel.onclose = () => {
             console.log('Data channel kapandı');
             this.updateChatStatus('Bağlantı yok', 'disconnected');
+        };
+        
+        dataChannel.onerror = (error) => {
+            console.error('Data channel hatası:', error);
         };
     }
     
@@ -591,6 +630,7 @@ class VideoCallApp {
             this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
             
             console.log('Kamera değiştiriliyor:', this.currentCameraFacing);
+            alert(`Kamera değiştiriliyor: ${this.currentCameraFacing === 'user' ? 'Ön Kamera' : 'Arka Kamera'}`);
             
             // Get new stream with different camera - try multiple approaches
             let newStream;
@@ -615,6 +655,7 @@ class VideoCallApp {
                 
             } catch (facingModeError) {
                 console.log('FacingMode ile başarısız, deviceId ile deneniyor:', facingModeError);
+                alert('FacingMode başarısız, cihaz ID ile deneniyor...');
                 
                 // If facingMode fails, try to get all devices and find the other camera
                 try {
@@ -622,6 +663,7 @@ class VideoCallApp {
                     const videoDevices = devices.filter(device => device.kind === 'videoinput');
                     
                     console.log('Mevcut kameralar:', videoDevices);
+                    alert(`Mevcut kamera sayısı: ${videoDevices.length}`);
                     
                     if (videoDevices.length < 2) {
                         throw new Error('Sadece bir kamera mevcut');
@@ -707,6 +749,7 @@ class VideoCallApp {
                 }, 1000);
                 
                 console.log('Kamera başarıyla değiştirildi');
+                alert('Kamera başarıyla değiştirildi!');
                 
             } else {
                 throw new Error('Yeni video track bulunamadı');
@@ -735,11 +778,18 @@ class VideoCallApp {
         const message = this.messageInput.value.trim();
         if (!message) return;
         
+        console.log('Mesaj gönderiliyor:', message);
+        console.log('Data channel durumu:', this.dataChannel ? this.dataChannel.readyState : 'null');
+        console.log('Socket durumu:', this.socket ? 'bağlı' : 'bağlı değil');
+        console.log('Room ID:', this.roomId);
+        
         if (this.dataChannel && this.dataChannel.readyState === 'open') {
+            console.log('Data channel ile gönderiliyor');
             this.dataChannel.send(message);
             this.displayMessage(message, 'own');
             this.messageInput.value = '';
         } else if (this.socket && this.roomId) {
+            console.log('Socket ile gönderiliyor');
             // Fallback to socket if data channel is not ready
             this.socket.emit('chat-message', {
                 roomId: this.roomId,
@@ -748,6 +798,7 @@ class VideoCallApp {
             this.displayMessage(message, 'own');
             this.messageInput.value = '';
         } else {
+            console.log('Bağlantı kurulmadı');
             alert('Bağlantı henüz kurulmadı!');
         }
     }
