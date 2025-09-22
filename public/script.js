@@ -369,6 +369,9 @@ class VideoCallApp {
                     stream = await navigator.mediaDevices.getUserMedia(c);
                     const s = stream.getVideoTracks()[0]?.getSettings?.() || {};
                     console.log('[media] OK ->', { label: stream.getVideoTracks()[0]?.label, deviceId: s.deviceId, facingMode: s.facingMode, width: s.width, height: s.height });
+                    // Kamera listesi ve mevcut cihaz ID'sini sakla
+                    this.availableCameras = cams;
+                    this.currentCameraDeviceId = s.deviceId || null;
                     break;
                 } catch (e) {
                     console.warn('[media] FAIL:', c.video, e?.name, e?.message);
@@ -688,139 +691,53 @@ class VideoCallApp {
     
     async switchCamera() {
         if (!this.localStream) return;
-        
         try {
-            // Toggle camera facing mode
-            this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
-            
-            console.log('Kamera değiştiriliyor:', this.currentCameraFacing);
-            
-            // Get new stream with different camera - try multiple approaches
-            let newStream;
-            let videoConstraints;
-            
-            // Get all available cameras first
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(device => device.kind === 'videoinput');
-            
-            console.log('Mevcut kameralar:', videoDevices.length);
-            
-            if (videoDevices.length < 2) {
-                throw new Error('Sadece bir kamera mevcut');
+            // Kamera envanteri yoksa yeniden yükle
+            if (!this.availableCameras || this.availableCameras.length === 0) {
+                const devs = await navigator.mediaDevices.enumerateDevices();
+                this.availableCameras = devs.filter(d => d.kind === 'videoinput');
             }
-            
-            // Find current camera device
-            const currentDeviceId = this.localStream.getVideoTracks()[0].getSettings().deviceId;
-            console.log('Mevcut kamera ID:', currentDeviceId);
-            
-            // Find a different camera device
-            const otherDevice = videoDevices.find(device => device.deviceId !== currentDeviceId);
-            
-            if (!otherDevice) {
-                throw new Error('Alternatif kamera bulunamadı');
-            }
-            
-            console.log('Alternatif kamera bulundu:', otherDevice.deviceId);
-            
-            // Try with deviceId first (more reliable)
-            try {
-                videoConstraints = {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    deviceId: { exact: otherDevice.deviceId }
-                };
-                
-                newStream = await navigator.mediaDevices.getUserMedia({
-                    video: videoConstraints,
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
-                });
-                
-                console.log('DeviceId ile başarılı');
-                
-            } catch (deviceIdError) {
-                console.log('DeviceId ile başarısız, facingMode deneniyor:', deviceIdError);
-                
-                // Fallback to facingMode
-                videoConstraints = {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    facingMode: this.currentCameraFacing
-                };
-                
-                newStream = await navigator.mediaDevices.getUserMedia({
-                    video: videoConstraints,
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
-                });
-                
-                console.log('FacingMode ile başarılı');
-            }
-            
-            if (!newStream) {
-                throw new Error('Yeni kamera akışı oluşturulamadı');
-            }
-            
-            // Stop old video track
-            const oldVideoTrack = this.localStream.getVideoTracks()[0];
-            if (oldVideoTrack) {
-                oldVideoTrack.stop();
-            }
-            
-            // Replace video track in local stream
+
+            // Mevcut deviceId'yi al
+            const currentId = this.localStream.getVideoTracks()[0]?.getSettings?.().deviceId || this.currentCameraDeviceId;
+            const cams = this.availableCameras;
+            if (!cams || cams.length < 2) throw new Error('Sadece bir kamera mevcut');
+
+            // Bir sonraki kamerayı seç (round-robin)
+            let next = cams.find(c => c.deviceId && c.deviceId !== currentId);
+            if (!next) next = cams[0];
+
+            console.log('Kamera değiştiriliyor ->', next.label, next.deviceId);
+
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { deviceId: { exact: next.deviceId } }
+            });
+
             const newVideoTrack = newStream.getVideoTracks()[0];
-            if (newVideoTrack) {
-                // Remove old video track and add new one
-                const oldTracks = this.localStream.getVideoTracks();
-                oldTracks.forEach(track => this.localStream.removeTrack(track));
-                
-                this.localStream.addTrack(newVideoTrack);
-                this.localVideo.srcObject = this.localStream;
-                
-                // Update peer connection
-                if (this.peerConnection) {
-                    const sender = this.peerConnection.getSenders().find(s => 
-                        s.track && s.track.kind === 'video'
-                    );
-                    if (sender) {
-                        await sender.replaceTrack(newVideoTrack);
-                    }
-                }
-                
-                // Update UI
-                this.cameraSwitchBtn.classList.add('camera-switched');
-                setTimeout(() => {
-                    this.cameraSwitchBtn.classList.remove('camera-switched');
-                }, 1000);
-                
-                console.log('Kamera başarıyla değiştirildi');
-                
-            } else {
-                throw new Error('Yeni video track bulunamadı');
+            const oldVideoTrack = this.localStream.getVideoTracks()[0];
+            if (oldVideoTrack) oldVideoTrack.stop();
+            if (oldVideoTrack) this.localStream.removeTrack(oldVideoTrack);
+            this.localStream.addTrack(newVideoTrack);
+            this.localVideo.srcObject = this.localStream;
+
+            // Peer connection sender güncelle
+            if (this.peerConnection) {
+                const sender = this.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                if (sender) await sender.replaceTrack(newVideoTrack);
             }
-            
+
+            // State güncelle
+            const s = newVideoTrack.getSettings?.() || {};
+            this.currentCameraDeviceId = s.deviceId || next.deviceId;
+
+            // UI feedback
+            this.cameraSwitchBtn.classList.add('camera-switched');
+            setTimeout(() => this.cameraSwitchBtn.classList.remove('camera-switched'), 800);
+            console.log('Kamera değiştirildi:', { label: newVideoTrack.label, settings: s });
+
         } catch (error) {
             console.error('Kamera değiştirme hatası:', error);
-            
-            // Revert camera facing mode on error
-            this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
-            
-            let errorMessage = 'Kamera değiştirilemedi. ';
-            if (error.message.includes('Sadece bir kamera mevcut')) {
-                errorMessage += 'Bu cihazda sadece bir kamera mevcut.';
-            } else if (error.message.includes('Alternatif kamera bulunamadı')) {
-                errorMessage += 'Alternatif kamera bulunamadı.';
-            } else {
-                errorMessage += 'Teknik bir hata oluştu.';
-            }
-            
-            alert(errorMessage);
         }
     }
     
