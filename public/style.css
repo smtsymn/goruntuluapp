@@ -104,6 +104,14 @@ header h1 {
     background: linear-gradient(45deg, #f44336, #d32f2f);
 }
 
+.btn-small.camera-switched {
+    background: linear-gradient(45deg, #FF9800, #F57C00);
+}
+
+.btn-small.fullscreen-active {
+    background: linear-gradient(45deg, #9C27B0, #7B1FA2);
+}
+
 .no-video-placeholder {
     position: absolute;
     top: 0;
@@ -129,6 +137,68 @@ header h1 {
     font-size: 1.2rem;
     font-weight: 600;
     opacity: 0.9;
+}
+
+/* Fullscreen overlay */
+.fullscreen-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.fullscreen-overlay video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.fullscreen-controls {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 10000;
+}
+
+.mini-preview {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 200px;
+    height: 150px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    z-index: 10000;
+}
+
+.mini-preview video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Chat room specific styles */
+.chat-messages.room-specific {
+    background: #f0f8ff;
+    border-left: 4px solid #4CAF50;
+}
+
+.chat-messages.room-specific::before {
+    content: "Oda: " attr(data-room-id);
+    display: block;
+    background: #4CAF50;
+    color: white;
+    padding: 5px 10px;
+    margin: -15px -15px 10px -15px;
+    font-size: 0.9rem;
+    font-weight: 600;
 }
 
 .controls {

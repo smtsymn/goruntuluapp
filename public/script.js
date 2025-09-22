@@ -10,6 +10,9 @@ class VideoCallApp {
         this.isConnected = false;
         this.isMuted = false;
         this.isVideoOff = false;
+        this.isFullscreen = false;
+        this.currentCameraFacing = 'user'; // 'user' or 'environment'
+        this.chatMessages = []; // Store chat messages per room
         
         // WebRTC configuration
         this.rtcConfig = {
@@ -36,7 +39,16 @@ class VideoCallApp {
         this.endBtn = document.getElementById('endBtn');
         this.muteBtn = document.getElementById('muteBtn');
         this.videoBtn = document.getElementById('videoBtn');
+        this.cameraSwitchBtn = document.getElementById('cameraSwitchBtn');
+        this.fullscreenBtn = document.getElementById('fullscreenBtn');
+        this.remoteFullscreenBtn = document.getElementById('remoteFullscreenBtn');
         this.retryBtn = document.getElementById('retryBtn');
+        
+        // Fullscreen elements
+        this.fullscreenOverlay = document.getElementById('fullscreenOverlay');
+        this.fullscreenVideo = document.getElementById('fullscreenVideo');
+        this.miniPreviewVideo = document.getElementById('miniPreviewVideo');
+        this.exitFullscreenBtn = document.getElementById('exitFullscreenBtn');
         
         // Room controls
         this.roomIdInput = document.getElementById('roomIdInput');
@@ -59,6 +71,10 @@ class VideoCallApp {
         this.endBtn.addEventListener('click', () => this.endCall());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
         this.videoBtn.addEventListener('click', () => this.toggleVideo());
+        this.cameraSwitchBtn.addEventListener('click', () => this.switchCamera());
+        this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen('local'));
+        this.remoteFullscreenBtn.addEventListener('click', () => this.toggleFullscreen('remote'));
+        this.exitFullscreenBtn.addEventListener('click', () => this.exitFullscreen());
         this.retryBtn.addEventListener('click', () => this.retryPermissions());
         
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
@@ -115,12 +131,16 @@ class VideoCallApp {
             this.roomId = data.roomId;
             this.roomInfo.textContent = `Oda ID: ${this.roomId} - Diğer kişi bu ID ile katılsın`;
             this.updateStatus('Oda oluşturuldu. Diğer kişi katıldığında bağlantı kurulacak.', 'connecting');
+            this.clearChatMessages();
+            this.setupRoomChat();
         });
         
         this.socket.on('room-joined', (data) => {
             this.roomId = data.roomId;
             this.roomInfo.textContent = `Oda ID: ${this.roomId} - Bağlanılıyor...`;
             this.updateStatus('Odaya katıldınız. Bağlantı kuruluyor...', 'connecting');
+            this.clearChatMessages();
+            this.setupRoomChat();
         });
         
         this.socket.on('room-full', () => {
@@ -169,6 +189,20 @@ class VideoCallApp {
     }
     
     async startCall() {
+        // This function is now only for enabling media controls
+        // Actual media will be started when joining a room
+        this.updateStatus('Oda oluşturun veya katılın. Kamera ve mikrofon odaya katıldığınızda aktif olacak.', 'disconnected');
+        
+        // Enable room controls
+        this.startBtn.disabled = true;
+        this.endBtn.disabled = false;
+        this.joinRoomBtn.disabled = false;
+        this.createRoomBtn.disabled = false;
+        
+        this.hideRetryButton();
+    }
+    
+    async startMedia() {
         try {
             this.updateStatus('Kamera ve mikrofon erişimi isteniyor...', 'connecting');
             
@@ -191,7 +225,7 @@ class VideoCallApp {
                     video: {
                         width: { ideal: 1280 },
                         height: { ideal: 720 },
-                        facingMode: 'user'
+                        facingMode: this.currentCameraFacing
                     },
                     audio: {
                         echoCancellation: true,
@@ -237,21 +271,24 @@ class VideoCallApp {
                 this.noVideoPlaceholder.style.display = 'flex';
                 this.videoBtn.disabled = true;
                 this.videoBtn.style.display = 'none';
+                this.cameraSwitchBtn.disabled = true;
+                this.cameraSwitchBtn.style.display = 'none';
             } else {
                 this.noVideoPlaceholder.style.display = 'none';
+                this.cameraSwitchBtn.disabled = false;
+                this.cameraSwitchBtn.style.display = 'inline-block';
             }
             
-            // Enable controls
-            this.startBtn.disabled = true;
-            this.endBtn.disabled = false;
+            // Enable media controls
             this.muteBtn.disabled = !hasAudio;
-            this.messageInput.disabled = false;
-            this.sendBtn.disabled = false;
+            this.videoBtn.disabled = !hasVideo;
+            this.fullscreenBtn.disabled = !hasVideo;
+            this.remoteFullscreenBtn.disabled = false;
             
             if (hasVideo && hasAudio) {
-                this.updateStatus('Kamera ve mikrofon hazır. Oda oluşturun veya katılın.', 'disconnected');
+                this.updateStatus('Kamera ve mikrofon aktif!', 'connected');
             } else if (hasAudio && !hasVideo) {
-                this.updateStatus('Mikrofon hazır. Sadece sesli konuşma yapabilirsiniz.', 'disconnected');
+                this.updateStatus('Mikrofon aktif! Sadece sesli konuşma yapabilirsiniz.', 'connected');
             }
             
             this.hideRetryButton();
@@ -305,27 +342,23 @@ class VideoCallApp {
         }, 1000);
     }
     
-    createRoom() {
-        if (!this.localStream) {
-            alert('Önce kamera ve mikrofonu başlatın!');
-            return;
-        }
+    async createRoom() {
+        // Start media first
+        await this.startMedia();
         
         this.socket.emit('create-room');
         this.isInitiator = true;
     }
     
-    joinRoom() {
-        if (!this.localStream) {
-            alert('Önce kamera ve mikrofonu başlatın!');
-            return;
-        }
-        
+    async joinRoom() {
         const roomId = this.roomIdInput.value.trim();
         if (!roomId) {
             alert('Lütfen oda ID girin!');
             return;
         }
+        
+        // Start media first
+        await this.startMedia();
         
         this.socket.emit('join-room', { roomId });
         this.isInitiator = false;
@@ -478,8 +511,22 @@ class VideoCallApp {
         this.muteBtn.disabled = true;
         this.videoBtn.disabled = true;
         this.videoBtn.style.display = 'inline-block'; // Show video button again
+        this.cameraSwitchBtn.disabled = true;
+        this.cameraSwitchBtn.style.display = 'none';
+        this.fullscreenBtn.disabled = true;
+        this.remoteFullscreenBtn.disabled = true;
         this.messageInput.disabled = true;
         this.sendBtn.disabled = true;
+        this.joinRoomBtn.disabled = true;
+        this.createRoomBtn.disabled = true;
+        
+        // Exit fullscreen if active
+        if (this.isFullscreen) {
+            this.exitFullscreen();
+        }
+        
+        // Clear chat messages
+        this.clearChatMessages();
         
         this.updateStatus('Bağlantı kesildi', 'disconnected');
         this.updateChatStatus('Bağlantı yok', 'disconnected');
@@ -536,6 +583,62 @@ class VideoCallApp {
         }
     }
     
+    async switchCamera() {
+        if (!this.localStream) return;
+        
+        try {
+            // Toggle camera facing mode
+            this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
+            
+            // Get new stream with different camera
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: this.currentCameraFacing
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+            
+            // Stop old video track
+            const oldVideoTrack = this.localStream.getVideoTracks()[0];
+            if (oldVideoTrack) {
+                oldVideoTrack.stop();
+            }
+            
+            // Replace video track in local stream
+            const newVideoTrack = newStream.getVideoTracks()[0];
+            if (newVideoTrack) {
+                this.localStream.addTrack(newVideoTrack);
+                this.localVideo.srcObject = this.localStream;
+                
+                // Update peer connection
+                if (this.peerConnection) {
+                    const sender = this.peerConnection.getSenders().find(s => 
+                        s.track && s.track.kind === 'video'
+                    );
+                    if (sender) {
+                        await sender.replaceTrack(newVideoTrack);
+                    }
+                }
+                
+                // Update UI
+                this.cameraSwitchBtn.classList.add('camera-switched');
+                setTimeout(() => {
+                    this.cameraSwitchBtn.classList.remove('camera-switched');
+                }, 1000);
+            }
+            
+        } catch (error) {
+            console.error('Kamera değiştirme hatası:', error);
+            alert('Kamera değiştirilemedi. Sadece bir kamera mevcut olabilir.');
+        }
+    }
+    
     sendMessage() {
         const message = this.messageInput.value.trim();
         if (!message) return;
@@ -557,6 +660,40 @@ class VideoCallApp {
         }
     }
     
+    toggleFullscreen(type) {
+        if (this.isFullscreen) {
+            this.exitFullscreen();
+            return;
+        }
+        
+        this.isFullscreen = true;
+        
+        if (type === 'local') {
+            this.fullscreenVideo.srcObject = this.localVideo.srcObject;
+            this.miniPreviewVideo.srcObject = this.remoteVideo.srcObject;
+        } else {
+            this.fullscreenVideo.srcObject = this.remoteVideo.srcObject;
+            this.miniPreviewVideo.srcObject = this.localVideo.srcObject;
+        }
+        
+        this.fullscreenOverlay.style.display = 'flex';
+        this.fullscreenBtn.classList.add('fullscreen-active');
+        this.remoteFullscreenBtn.classList.add('fullscreen-active');
+        
+        // Hide main video container
+        document.querySelector('.video-container').style.display = 'none';
+    }
+    
+    exitFullscreen() {
+        this.isFullscreen = false;
+        this.fullscreenOverlay.style.display = 'none';
+        this.fullscreenBtn.classList.remove('fullscreen-active');
+        this.remoteFullscreenBtn.classList.remove('fullscreen-active');
+        
+        // Show main video container
+        document.querySelector('.video-container').style.display = 'grid';
+    }
+    
     displayMessage(message, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
@@ -574,6 +711,18 @@ class VideoCallApp {
     updateChatStatus(message, status) {
         this.chatStatus.textContent = message;
         this.chatStatus.className = `chat-status ${status}`;
+    }
+    
+    clearChatMessages() {
+        this.chatMessages.innerHTML = '';
+        this.chatMessages.classList.remove('room-specific');
+    }
+    
+    setupRoomChat() {
+        if (this.roomId) {
+            this.chatMessages.classList.add('room-specific');
+            this.chatMessages.setAttribute('data-room-id', this.roomId);
+        }
     }
 }
 
