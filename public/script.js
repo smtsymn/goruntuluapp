@@ -439,9 +439,16 @@ class VideoCallApp {
     async setupPeerConnection() {
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
         
-        // Add local stream
+        // Add local stream (ensure transceivers exist for Android Chrome stability)
         this.localStream.getTracks().forEach(track => {
-            this.peerConnection.addTrack(track, this.localStream);
+            const already = this.peerConnection.getSenders().some(s => s.track && s.track.kind === track.kind);
+            if (!already) {
+                try {
+                    this.peerConnection.addTransceiver(track, { direction: 'sendrecv' });
+                } catch (_) {
+                    this.peerConnection.addTrack(track, this.localStream);
+                }
+            }
         });
         
         // Handle remote stream
@@ -503,6 +510,21 @@ class VideoCallApp {
                 });
             }
         };
+
+        // Chrome on Android bazen transceiver olmadan video replaceTrack sorun çıkarır
+        // Mevcut sender yoksa bir transceiver ekle (video için)
+        const hasVideoSender = this.peerConnection.getSenders().some(s => s.track && s.track.kind === 'video');
+        if (!hasVideoSender && this.localStream) {
+            const videoTrack = this.localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                try {
+                    this.peerConnection.addTransceiver(videoTrack, { direction: 'sendrecv' });
+                } catch (_) {
+                    // tarayıcı desteklemezse sessiz geç
+                    this.peerConnection.addTrack(videoTrack, this.localStream);
+                }
+            }
+        }
         
         // Handle connection state changes
         this.peerConnection.onconnectionstatechange = () => {
@@ -692,50 +714,76 @@ class VideoCallApp {
     async switchCamera() {
         if (!this.localStream) return;
         try {
-            // Kamera envanteri yoksa yeniden yükle
+            // Kamera listesi yoksa yükle
             if (!this.availableCameras || this.availableCameras.length === 0) {
                 const devs = await navigator.mediaDevices.enumerateDevices();
                 this.availableCameras = devs.filter(d => d.kind === 'videoinput');
             }
 
-            // Mevcut deviceId'yi al
-            const currentId = this.localStream.getVideoTracks()[0]?.getSettings?.().deviceId || this.currentCameraDeviceId;
             const cams = this.availableCameras;
             if (!cams || cams.length < 2) throw new Error('Sadece bir kamera mevcut');
 
-            // Bir sonraki kamerayı seç (round-robin)
-            let next = cams.find(c => c.deviceId && c.deviceId !== currentId);
-            if (!next) next = cams[0];
+            const currentTrack = this.localStream.getVideoTracks()[0];
+            const currentId = currentTrack?.getSettings?.().deviceId || this.currentCameraDeviceId;
+            const currentLabel = currentTrack?.label || '';
+            const currentlyBack = /back|rear|environment|arka|dış|external|bache|traseira|trasera/i.test(currentLabel);
+            const targetFacing = currentlyBack ? 'user' : 'environment';
 
-            console.log('Kamera değiştiriliyor ->', next.label, next.deviceId);
-
-            const newStream = await navigator.mediaDevices.getUserMedia({
+            // Adaylar: başka deviceId → facingMode hedef → facingMode diğer
+            const deviceAlternative = cams.find(c => c.deviceId && c.deviceId !== currentId);
+            const candidates = [];
+            if (deviceAlternative) {
+                candidates.push({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                    video: { deviceId: { exact: deviceAlternative.deviceId } }
+                });
+            }
+            candidates.push({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                video: { deviceId: { exact: next.deviceId } }
+                video: { facingMode: { ideal: targetFacing } }
+            });
+            candidates.push({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { facingMode: { ideal: currentlyBack ? 'environment' : 'user' } }
             });
 
+            let newStream = null;
+            let lastErr = null;
+            for (const c of candidates) {
+                try {
+                    console.log('[switchCamera] trying:', c.video);
+                    newStream = await navigator.mediaDevices.getUserMedia(c);
+                    break;
+                } catch (e) {
+                    console.warn('[switchCamera] failed:', c.video, e?.name, e?.message);
+                    lastErr = e;
+                }
+            }
+            if (!newStream) throw lastErr || new Error('Yeni kamera akışı oluşturulamadı');
+
             const newVideoTrack = newStream.getVideoTracks()[0];
-            const oldVideoTrack = this.localStream.getVideoTracks()[0];
+            const oldVideoTrack = currentTrack;
             if (oldVideoTrack) oldVideoTrack.stop();
             if (oldVideoTrack) this.localStream.removeTrack(oldVideoTrack);
             this.localStream.addTrack(newVideoTrack);
             this.localVideo.srcObject = this.localStream;
 
-            // Peer connection sender güncelle
             if (this.peerConnection) {
-                const sender = this.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                if (sender) await sender.replaceTrack(newVideoTrack);
+                let sender = this.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                if (!sender) {
+                    // hiç yoksa bir transceiver ekle
+                    this.peerConnection.addTrack(newVideoTrack, this.localStream);
+                } else {
+                    await sender.replaceTrack(newVideoTrack);
+                }
             }
 
-            // State güncelle
             const s = newVideoTrack.getSettings?.() || {};
-            this.currentCameraDeviceId = s.deviceId || next.deviceId;
+            this.currentCameraDeviceId = s.deviceId || deviceAlternative?.deviceId || this.currentCameraDeviceId;
 
-            // UI feedback
             this.cameraSwitchBtn.classList.add('camera-switched');
             setTimeout(() => this.cameraSwitchBtn.classList.remove('camera-switched'), 800);
             console.log('Kamera değiştirildi:', { label: newVideoTrack.label, settings: s });
-
         } catch (error) {
             console.error('Kamera değiştirme hatası:', error);
         }
