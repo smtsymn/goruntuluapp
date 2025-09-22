@@ -29,6 +29,7 @@ class VideoCallApp {
         // Video elements
         this.localVideo = document.getElementById('localVideo');
         this.remoteVideo = document.getElementById('remoteVideo');
+        this.noVideoPlaceholder = document.getElementById('noVideoPlaceholder');
         
         // Control buttons
         this.startBtn = document.getElementById('startBtn');
@@ -184,45 +185,90 @@ class VideoCallApp {
             console.log('Mikrofon izni:', micPermissions.state);
             
             // Get user media with specific constraints
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    facingMode: 'user'
-                },
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
+            // First try with both video and audio
+            try {
+                this.localStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: 'user'
+                    },
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+            } catch (videoError) {
+                console.log('Video ile başarısız, sadece audio deneniyor:', videoError);
+                
+                // If video fails, try only audio
+                try {
+                    this.localStream = await navigator.mediaDevices.getUserMedia({
+                        video: false,
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                    
+                    // Show message that only audio is available
+                    this.updateStatus('Sadece sesli konuşma (kamera bulunamadı)', 'disconnected');
+                    
+                } catch (audioError) {
+                    console.log('Audio da başarısız:', audioError);
+                    throw audioError;
                 }
-            });
+            }
             
             this.localVideo.srcObject = this.localStream;
+            
+            // Check if video is available
+            const hasVideo = this.localStream.getVideoTracks().length > 0;
+            const hasAudio = this.localStream.getAudioTracks().length > 0;
+            
+            console.log('Video mevcut:', hasVideo);
+            console.log('Audio mevcut:', hasAudio);
+            
+            // Hide video if not available
+            if (!hasVideo) {
+                this.localVideo.style.display = 'none';
+                this.noVideoPlaceholder.style.display = 'flex';
+                this.videoBtn.disabled = true;
+                this.videoBtn.style.display = 'none';
+            } else {
+                this.noVideoPlaceholder.style.display = 'none';
+            }
             
             // Enable controls
             this.startBtn.disabled = true;
             this.endBtn.disabled = false;
-            this.muteBtn.disabled = false;
-            this.videoBtn.disabled = false;
+            this.muteBtn.disabled = !hasAudio;
             this.messageInput.disabled = false;
             this.sendBtn.disabled = false;
             
-            this.updateStatus('Kamera ve mikrofon hazır. Oda oluşturun veya katılın.', 'disconnected');
+            if (hasVideo && hasAudio) {
+                this.updateStatus('Kamera ve mikrofon hazır. Oda oluşturun veya katılın.', 'disconnected');
+            } else if (hasAudio && !hasVideo) {
+                this.updateStatus('Mikrofon hazır. Sadece sesli konuşma yapabilirsiniz.', 'disconnected');
+            }
+            
             this.hideRetryButton();
             
         } catch (error) {
             console.error('Kamera/mikrofon erişim hatası:', error);
             
-            let errorMessage = 'Kamera ve mikrofon erişimi gerekli. ';
+            let errorMessage = 'Mikrofon erişimi gerekli. ';
             
             if (error.name === 'NotAllowedError') {
-                errorMessage += 'Lütfen tarayıcı ayarlarından kamera ve mikrofon iznini verin.';
+                errorMessage += 'Lütfen tarayıcı ayarlarından mikrofon iznini verin.';
             } else if (error.name === 'NotFoundError') {
-                errorMessage += 'Kamera veya mikrofon bulunamadı.';
+                errorMessage += 'Mikrofon bulunamadı. Lütfen mikrofon bağlı olduğundan emin olun.';
             } else if (error.name === 'NotReadableError') {
-                errorMessage += 'Kamera veya mikrofon başka bir uygulama tarafından kullanılıyor.';
+                errorMessage += 'Mikrofon başka bir uygulama tarafından kullanılıyor.';
             } else if (error.name === 'OverconstrainedError') {
-                errorMessage += 'Kamera ayarları desteklenmiyor.';
+                errorMessage += 'Mikrofon ayarları desteklenmiyor.';
             } else {
                 errorMessage += 'Bilinmeyen hata: ' + error.message;
             }
@@ -424,11 +470,14 @@ class VideoCallApp {
         
         // Reset UI
         this.localVideo.srcObject = null;
+        this.localVideo.style.display = 'block'; // Show video element again
+        this.noVideoPlaceholder.style.display = 'none'; // Hide placeholder
         this.remoteVideo.srcObject = null;
         this.startBtn.disabled = false;
         this.endBtn.disabled = true;
         this.muteBtn.disabled = true;
         this.videoBtn.disabled = true;
+        this.videoBtn.style.display = 'inline-block'; // Show video button again
         this.messageInput.disabled = true;
         this.sendBtn.disabled = true;
         
