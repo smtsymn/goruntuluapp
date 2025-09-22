@@ -35,6 +35,7 @@ class VideoCallApp {
         this.endBtn = document.getElementById('endBtn');
         this.muteBtn = document.getElementById('muteBtn');
         this.videoBtn = document.getElementById('videoBtn');
+        this.retryBtn = document.getElementById('retryBtn');
         
         // Room controls
         this.roomIdInput = document.getElementById('roomIdInput');
@@ -57,6 +58,7 @@ class VideoCallApp {
         this.endBtn.addEventListener('click', () => this.endCall());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
         this.videoBtn.addEventListener('click', () => this.toggleVideo());
+        this.retryBtn.addEventListener('click', () => this.retryPermissions());
         
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
         this.createRoomBtn.addEventListener('click', () => this.createRoom());
@@ -65,6 +67,33 @@ class VideoCallApp {
         this.messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.sendMessage();
         });
+        
+        // Chrome için ek izin kontrolü
+        this.checkPermissions();
+    }
+    
+    async checkPermissions() {
+        try {
+            // Check if permissions API is supported
+            if ('permissions' in navigator) {
+                const cameraPermission = await navigator.permissions.query({ name: 'camera' });
+                const micPermission = await navigator.permissions.query({ name: 'microphone' });
+                
+                console.log('Kamera izin durumu:', cameraPermission.state);
+                console.log('Mikrofon izin durumu:', micPermission.state);
+                
+                // Listen for permission changes
+                cameraPermission.onchange = () => {
+                    console.log('Kamera izni değişti:', cameraPermission.state);
+                };
+                
+                micPermission.onchange = () => {
+                    console.log('Mikrofon izni değişti:', micPermission.state);
+                };
+            }
+        } catch (error) {
+            console.log('İzin kontrolü yapılamadı:', error);
+        }
     }
     
     initializeSocket() {
@@ -142,10 +171,30 @@ class VideoCallApp {
         try {
             this.updateStatus('Kamera ve mikrofon erişimi isteniyor...', 'connecting');
             
-            // Get user media
+            // Check if getUserMedia is supported
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error('getUserMedia desteklenmiyor');
+            }
+            
+            // Check permissions first
+            const permissions = await navigator.permissions.query({ name: 'camera' });
+            const micPermissions = await navigator.permissions.query({ name: 'microphone' });
+            
+            console.log('Kamera izni:', permissions.state);
+            console.log('Mikrofon izni:', micPermissions.state);
+            
+            // Get user media with specific constraints
             this.localStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: 'user'
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
             });
             
             this.localVideo.srcObject = this.localStream;
@@ -159,12 +208,55 @@ class VideoCallApp {
             this.sendBtn.disabled = false;
             
             this.updateStatus('Kamera ve mikrofon hazır. Oda oluşturun veya katılın.', 'disconnected');
+            this.hideRetryButton();
             
         } catch (error) {
             console.error('Kamera/mikrofon erişim hatası:', error);
+            
+            let errorMessage = 'Kamera ve mikrofon erişimi gerekli. ';
+            
+            if (error.name === 'NotAllowedError') {
+                errorMessage += 'Lütfen tarayıcı ayarlarından kamera ve mikrofon iznini verin.';
+            } else if (error.name === 'NotFoundError') {
+                errorMessage += 'Kamera veya mikrofon bulunamadı.';
+            } else if (error.name === 'NotReadableError') {
+                errorMessage += 'Kamera veya mikrofon başka bir uygulama tarafından kullanılıyor.';
+            } else if (error.name === 'OverconstrainedError') {
+                errorMessage += 'Kamera ayarları desteklenmiyor.';
+            } else {
+                errorMessage += 'Bilinmeyen hata: ' + error.message;
+            }
+            
             this.updateStatus('Kamera/mikrofon erişimi reddedildi', 'disconnected');
-            alert('Kamera ve mikrofon erişimi gerekli. Lütfen izin verin.');
+            this.showRetryButton();
+            alert(errorMessage);
         }
+    }
+    
+    showRetryButton() {
+        this.retryBtn.style.display = 'inline-block';
+        this.startBtn.disabled = true;
+    }
+    
+    hideRetryButton() {
+        this.retryBtn.style.display = 'none';
+        this.startBtn.disabled = false;
+    }
+    
+    async retryPermissions() {
+        this.hideRetryButton();
+        this.updateStatus('İzinler tekrar deneniyor...', 'connecting');
+        
+        // Clear any existing stream
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+        
+        // Wait a bit before retrying
+        setTimeout(() => {
+            this.startCall();
+        }, 1000);
     }
     
     createRoom() {

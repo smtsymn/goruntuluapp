@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:;">
+    <meta name="referrer" content="no-referrer">
     <title>Görüntülü Konuşma</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -35,6 +37,7 @@
         <div class="controls">
             <button id="startBtn" class="btn btn-primary">Konuşmaya Başla</button>
             <button id="endBtn" class="btn btn-danger" disabled>Konuşmayı Bitir</button>
+            <button id="retryBtn" class="btn btn-secondary" style="display: none;">İzinleri Tekrar Dene</button>
         </div>
 
         <div class="room-section">
