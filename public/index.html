@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Görüntülü Konuşma</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Görüntülü Konuşma</h1>
+            <div class="connection-status" id="connectionStatus">Bağlantı Bekleniyor</div>
+        </header>
+
+        <main class="video-container">
+            <div class="video-wrapper">
+                <video id="localVideo" autoplay muted playsinline></video>
+                <div class="video-label">Sen</div>
+                <div class="video-controls">
+                    <button id="muteBtn" class="btn btn-small" disabled>
+                        <span class="icon">🎤</span>
+                    </button>
+                    <button id="videoBtn" class="btn btn-small" disabled>
+                        <span class="icon">📹</span>
+                    </button>
+                </div>
+            </div>
+            <div class="video-wrapper">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <div class="video-label">Karşı Taraf</div>
+            </div>
+        </main>
+
+        <div class="controls">
+            <button id="startBtn" class="btn btn-primary">Konuşmaya Başla</button>
+            <button id="endBtn" class="btn btn-danger" disabled>Konuşmayı Bitir</button>
+        </div>
+
+        <div class="room-section">
+            <div class="room-controls">
+                <input type="text" id="roomIdInput" placeholder="Oda ID girin veya oluşturun" maxlength="10">
+                <button id="joinRoomBtn" class="btn btn-primary">Odaya Katıl</button>
+                <button id="createRoomBtn" class="btn btn-secondary">Yeni Oda Oluştur</button>
+            </div>
+            <div class="room-info" id="roomInfo"></div>
+        </div>
+
+        <div class="chat-section">
+            <div class="chat-header">
+                <h3>Chat</h3>
+                <div class="chat-status" id="chatStatus">Bağlantı yok</div>
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-input">
+                <input type="text" id="messageInput" placeholder="Mesaj yazın..." disabled>
+                <button id="sendBtn" class="btn btn-primary" disabled>Gönder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.io Client -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
