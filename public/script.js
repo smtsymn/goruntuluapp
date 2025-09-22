@@ -726,61 +726,50 @@ class VideoCallApp {
             const currentTrack = this.localStream.getVideoTracks()[0];
             const currentId = currentTrack?.getSettings?.().deviceId || this.currentCameraDeviceId;
             const currentLabel = currentTrack?.label || '';
-            const currentlyBack = /back|rear|environment|arka|dış|external|bache|traseira|trasera/i.test(currentLabel);
-            const targetFacing = currentlyBack ? 'user' : 'environment';
+            const isBack = /back|rear|environment|arka|dış|external|bache|traseira|trasera/i.test(currentLabel);
+            const targetFacing = isBack ? 'user' : 'environment';
 
-            // Adaylar: başka deviceId → facingMode hedef → facingMode diğer
-            const deviceAlternative = cams.find(c => c.deviceId && c.deviceId !== currentId);
+            // Önce farklı deviceId, sonra hedef facingMode, sonra diğer facingMode
+            const alternative = cams.find(c => c.deviceId && c.deviceId !== currentId);
             const candidates = [];
-            if (deviceAlternative) {
-                candidates.push({
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                    video: { deviceId: { exact: deviceAlternative.deviceId } }
-                });
+            if (alternative) {
+                candidates.push({ audio: false, video: { deviceId: { exact: alternative.deviceId } } });
             }
-            candidates.push({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                video: { facingMode: { ideal: targetFacing } }
-            });
-            candidates.push({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                video: { facingMode: { ideal: currentlyBack ? 'environment' : 'user' } }
-            });
+            candidates.push({ audio: false, video: { facingMode: { ideal: targetFacing } } });
+            candidates.push({ audio: false, video: { facingMode: { ideal: isBack ? 'environment' : 'user' } } });
 
-            let newStream = null;
+            let newVideoTrack = null;
             let lastErr = null;
             for (const c of candidates) {
                 try {
                     console.log('[switchCamera] trying:', c.video);
-                    newStream = await navigator.mediaDevices.getUserMedia(c);
+                    const tmp = await navigator.mediaDevices.getUserMedia(c);
+                    newVideoTrack = tmp.getVideoTracks()[0];
+                    // tmp içindeki audio track yok, sadece video aldık; tmp'i kapatmadan önce track'ı alıyoruz
                     break;
                 } catch (e) {
                     console.warn('[switchCamera] failed:', c.video, e?.name, e?.message);
                     lastErr = e;
                 }
             }
-            if (!newStream) throw lastErr || new Error('Yeni kamera akışı oluşturulamadı');
+            if (!newVideoTrack) throw lastErr || new Error('Yeni video track alınamadı');
 
-            const newVideoTrack = newStream.getVideoTracks()[0];
-            const oldVideoTrack = currentTrack;
-            if (oldVideoTrack) oldVideoTrack.stop();
-            if (oldVideoTrack) this.localStream.removeTrack(oldVideoTrack);
-            this.localStream.addTrack(newVideoTrack);
-            this.localVideo.srcObject = this.localStream;
-
+            // Önce sender.replaceTrack, sonra localStream güncelle
             if (this.peerConnection) {
-                let sender = this.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-                if (!sender) {
-                    // hiç yoksa bir transceiver ekle
-                    this.peerConnection.addTrack(newVideoTrack, this.localStream);
-                } else {
-                    await sender.replaceTrack(newVideoTrack);
-                }
+                const sender = this.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+                if (sender) await sender.replaceTrack(newVideoTrack);
             }
 
-            const s = newVideoTrack.getSettings?.() || {};
-            this.currentCameraDeviceId = s.deviceId || deviceAlternative?.deviceId || this.currentCameraDeviceId;
+            if (currentTrack) this.localStream.removeTrack(currentTrack);
+            this.localStream.addTrack(newVideoTrack);
+            if (currentTrack) currentTrack.stop();
+            this.localVideo.srcObject = this.localStream;
 
+            // State
+            const s = newVideoTrack.getSettings?.() || {};
+            this.currentCameraDeviceId = s.deviceId || alternative?.deviceId || this.currentCameraDeviceId;
+
+            // UI feedback
             this.cameraSwitchBtn.classList.add('camera-switched');
             setTimeout(() => this.cameraSwitchBtn.classList.remove('camera-switched'), 800);
             console.log('Kamera değiştirildi:', { label: newVideoTrack.label, settings: s });
