@@ -630,14 +630,57 @@ class VideoCallApp {
             this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
             
             console.log('Kamera değiştiriliyor:', this.currentCameraFacing);
-            alert(`Kamera değiştiriliyor: ${this.currentCameraFacing === 'user' ? 'Ön Kamera' : 'Arka Kamera'}`);
             
             // Get new stream with different camera - try multiple approaches
             let newStream;
             let videoConstraints;
             
-            // First try with exact facingMode
+            // Get all available cameras first
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
+            console.log('Mevcut kameralar:', videoDevices.length);
+            
+            if (videoDevices.length < 2) {
+                throw new Error('Sadece bir kamera mevcut');
+            }
+            
+            // Find current camera device
+            const currentDeviceId = this.localStream.getVideoTracks()[0].getSettings().deviceId;
+            console.log('Mevcut kamera ID:', currentDeviceId);
+            
+            // Find a different camera device
+            const otherDevice = videoDevices.find(device => device.deviceId !== currentDeviceId);
+            
+            if (!otherDevice) {
+                throw new Error('Alternatif kamera bulunamadı');
+            }
+            
+            console.log('Alternatif kamera bulundu:', otherDevice.deviceId);
+            
+            // Try with deviceId first (more reliable)
             try {
+                videoConstraints = {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    deviceId: { exact: otherDevice.deviceId }
+                };
+                
+                newStream = await navigator.mediaDevices.getUserMedia({
+                    video: videoConstraints,
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                console.log('DeviceId ile başarılı');
+                
+            } catch (deviceIdError) {
+                console.log('DeviceId ile başarısız, facingMode deneniyor:', deviceIdError);
+                
+                // Fallback to facingMode
                 videoConstraints = {
                     width: { ideal: 1280 },
                     height: { ideal: 720 },
@@ -653,63 +696,7 @@ class VideoCallApp {
                     }
                 });
                 
-            } catch (facingModeError) {
-                console.log('FacingMode ile başarısız, deviceId ile deneniyor:', facingModeError);
-                alert('FacingMode başarısız, cihaz ID ile deneniyor...');
-                
-                // If facingMode fails, try to get all devices and find the other camera
-                try {
-                    const devices = await navigator.mediaDevices.enumerateDevices();
-                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                    
-                    console.log('Mevcut kameralar:', videoDevices);
-                    alert(`Mevcut kamera sayısı: ${videoDevices.length}`);
-                    
-                    if (videoDevices.length < 2) {
-                        throw new Error('Sadece bir kamera mevcut');
-                    }
-                    
-                    // Find a different camera device
-                    const currentDeviceId = this.localStream.getVideoTracks()[0].getSettings().deviceId;
-                    const otherDevice = videoDevices.find(device => device.deviceId !== currentDeviceId);
-                    
-                    if (!otherDevice) {
-                        throw new Error('Alternatif kamera bulunamadı');
-                    }
-                    
-                    videoConstraints = {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        deviceId: { exact: otherDevice.deviceId }
-                    };
-                    
-                    newStream = await navigator.mediaDevices.getUserMedia({
-                        video: videoConstraints,
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        }
-                    });
-                    
-                } catch (deviceIdError) {
-                    console.log('DeviceId ile de başarısız, genel constraints ile deneniyor:', deviceIdError);
-                    
-                    // Last resort: try with just basic constraints
-                    videoConstraints = {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    };
-                    
-                    newStream = await navigator.mediaDevices.getUserMedia({
-                        video: videoConstraints,
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        }
-                    });
-                }
+                console.log('FacingMode ile başarılı');
             }
             
             if (!newStream) {
@@ -749,7 +736,6 @@ class VideoCallApp {
                 }, 1000);
                 
                 console.log('Kamera başarıyla değiştirildi');
-                alert('Kamera başarıyla değiştirildi!');
                 
             } else {
                 throw new Error('Yeni video track bulunamadı');
@@ -814,9 +800,17 @@ class VideoCallApp {
         if (type === 'local') {
             this.fullscreenVideo.srcObject = this.localVideo.srcObject;
             this.miniPreviewVideo.srcObject = this.remoteVideo.srcObject;
+            
+            // Set audio properties correctly
+            this.fullscreenVideo.muted = true; // Local video should be muted
+            this.miniPreviewVideo.muted = false; // Remote video should have audio
         } else {
             this.fullscreenVideo.srcObject = this.remoteVideo.srcObject;
             this.miniPreviewVideo.srcObject = this.localVideo.srcObject;
+            
+            // Set audio properties correctly
+            this.fullscreenVideo.muted = false; // Remote video should have audio
+            this.miniPreviewVideo.muted = true; // Local video should be muted
         }
         
         this.fullscreenOverlay.style.display = 'flex';
