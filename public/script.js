@@ -218,55 +218,37 @@ class VideoCallApp {
     async startMedia() {
         try {
             this.updateStatus('Kamera ve mikrofon erişimi isteniyor...', 'connecting');
-            
+
             // Check if getUserMedia is supported
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 throw new Error('getUserMedia desteklenmiyor');
             }
-            
-            // Check permissions first
-            const permissions = await navigator.permissions.query({ name: 'camera' });
-            const micPermissions = await navigator.permissions.query({ name: 'microphone' });
-            
-            console.log('Kamera izni:', permissions.state);
-            console.log('Mikrofon izni:', micPermissions.state);
-            
-            // Get user media with specific constraints
-            // First try with both video and audio
+
+            // Önce izin durumlarını logla (uyumluysa)
             try {
+                const camPerm = await navigator.permissions.query({ name: 'camera' });
+                const micPerm = await navigator.permissions.query({ name: 'microphone' });
+                console.log('Kamera izni:', camPerm.state);
+                console.log('Mikrofon izni:', micPerm.state);
+            } catch (_) {
+                // bazı tarayıcılar permissions API desteklemez
+            }
+
+            // Android (ve genel) için: arka kamerayı deviceId ile tercih et, fallback facingMode/env, en son user
+            try {
+                this.localStream = await this.getPreferredMediaStreamAndroid();
+            } catch (videoError) {
+                console.log('Video akışı alınamadı, sadece audio deneniyor:', videoError);
+                // Yalnızca ses fallback
                 this.localStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 },
-                        facingMode: this.currentCameraFacing
-                    },
+                    video: false,
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
                     }
                 });
-            } catch (videoError) {
-                console.log('Video ile başarısız, sadece audio deneniyor:', videoError);
-                
-                // If video fails, try only audio
-                try {
-                    this.localStream = await navigator.mediaDevices.getUserMedia({
-                        video: false,
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true,
-                            autoGainControl: true
-                        }
-                    });
-                    
-                    // Show message that only audio is available
-                    this.updateStatus('Sadece sesli konuşma (kamera bulunamadı)', 'disconnected');
-                    
-                } catch (audioError) {
-                    console.log('Audio da başarısız:', audioError);
-                    throw audioError;
-                }
+                this.updateStatus('Sadece sesli konuşma (kamera bulunamadı)', 'disconnected');
             }
             
             this.localVideo.srcObject = this.localStream;
@@ -330,6 +312,76 @@ class VideoCallApp {
             this.updateStatus('Kamera/mikrofon erişimi reddedildi', 'disconnected');
             this.showRetryButton();
             alert(errorMessage);
+        }
+    }
+
+    // Arka kamerayı kesin olarak tercih etmeye çalışan, enumerateDevices + deviceId öncelikli akış sağlayıcı
+    async getPreferredMediaStreamAndroid() {
+        console.log('[media] geçici izin için akış alınıyor...');
+        const temp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cams = devices.filter(d => d.kind === 'videoinput');
+            console.log('[media] videoInputs:', cams.map(v => ({ label: v.label, id: v.deviceId, groupId: v.groupId })));
+
+            const isBack = (label = '') => /back|rear|environment|arka|dış|external|bache|traseira|trasera/i.test(label);
+
+            const currentId = temp.getVideoTracks()[0]?.getSettings?.().deviceId;
+            const backCam = cams.find(c => isBack(c.label));
+            const otherCam = cams.find(c => c.deviceId && c.deviceId !== currentId);
+
+            const tries = [];
+            if (backCam?.deviceId) {
+                tries.push({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                    video: { deviceId: { exact: backCam.deviceId } }
+                });
+            } else if (otherCam?.deviceId) {
+                tries.push({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                    video: { deviceId: { exact: otherCam.deviceId } }
+                });
+            }
+            // facingMode environment
+            tries.push({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { facingMode: { ideal: 'environment' } }
+            });
+            // bazı tarayıcılar için advanced fallback
+            tries.push({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { advanced: [{ facingMode: 'environment' }] }
+            });
+            // son çare: user
+            tries.push({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                video: { facingMode: { ideal: 'user' } }
+            });
+
+            // geçici akışı kapat
+            temp.getTracks().forEach(t => t.stop());
+
+            let stream = null;
+            let lastErr = null;
+            for (const c of tries) {
+                try {
+                    console.log('[media] try gUM:', c.video);
+                    stream = await navigator.mediaDevices.getUserMedia(c);
+                    const s = stream.getVideoTracks()[0]?.getSettings?.() || {};
+                    console.log('[media] OK ->', { label: stream.getVideoTracks()[0]?.label, deviceId: s.deviceId, facingMode: s.facingMode, width: s.width, height: s.height });
+                    break;
+                } catch (e) {
+                    console.warn('[media] FAIL:', c.video, e?.name, e?.message);
+                    lastErr = e;
+                }
+            }
+
+            if (!stream) throw lastErr || new Error('Kamera akışı alınamadı');
+            return stream;
+        } catch (e) {
+            // hata halinde geçici akış yine kapansın (zaten yukarıda kapattık)
+            temp.getTracks().forEach(t => t.stop());
+            throw e;
         }
     }
     
