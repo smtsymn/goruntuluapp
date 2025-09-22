@@ -275,8 +275,8 @@ class VideoCallApp {
                 this.cameraSwitchBtn.style.display = 'none';
             } else {
                 this.noVideoPlaceholder.style.display = 'none';
-                this.cameraSwitchBtn.disabled = false;
-                this.cameraSwitchBtn.style.display = 'inline-block';
+                // Check if multiple cameras are available
+                this.checkCameraAvailability();
             }
             
             // Enable media controls
@@ -590,19 +590,89 @@ class VideoCallApp {
             // Toggle camera facing mode
             this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
             
-            // Get new stream with different camera
-            const newStream = await navigator.mediaDevices.getUserMedia({
-                video: {
+            console.log('Kamera değiştiriliyor:', this.currentCameraFacing);
+            
+            // Get new stream with different camera - try multiple approaches
+            let newStream;
+            let videoConstraints;
+            
+            // First try with exact facingMode
+            try {
+                videoConstraints = {
                     width: { ideal: 1280 },
                     height: { ideal: 720 },
                     facingMode: this.currentCameraFacing
-                },
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
+                };
+                
+                newStream = await navigator.mediaDevices.getUserMedia({
+                    video: videoConstraints,
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+            } catch (facingModeError) {
+                console.log('FacingMode ile başarısız, deviceId ile deneniyor:', facingModeError);
+                
+                // If facingMode fails, try to get all devices and find the other camera
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                    
+                    console.log('Mevcut kameralar:', videoDevices);
+                    
+                    if (videoDevices.length < 2) {
+                        throw new Error('Sadece bir kamera mevcut');
+                    }
+                    
+                    // Find a different camera device
+                    const currentDeviceId = this.localStream.getVideoTracks()[0].getSettings().deviceId;
+                    const otherDevice = videoDevices.find(device => device.deviceId !== currentDeviceId);
+                    
+                    if (!otherDevice) {
+                        throw new Error('Alternatif kamera bulunamadı');
+                    }
+                    
+                    videoConstraints = {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        deviceId: { exact: otherDevice.deviceId }
+                    };
+                    
+                    newStream = await navigator.mediaDevices.getUserMedia({
+                        video: videoConstraints,
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
+                    
+                } catch (deviceIdError) {
+                    console.log('DeviceId ile de başarısız, genel constraints ile deneniyor:', deviceIdError);
+                    
+                    // Last resort: try with just basic constraints
+                    videoConstraints = {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    };
+                    
+                    newStream = await navigator.mediaDevices.getUserMedia({
+                        video: videoConstraints,
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    });
                 }
-            });
+            }
+            
+            if (!newStream) {
+                throw new Error('Yeni kamera akışı oluşturulamadı');
+            }
             
             // Stop old video track
             const oldVideoTrack = this.localStream.getVideoTracks()[0];
@@ -613,6 +683,10 @@ class VideoCallApp {
             // Replace video track in local stream
             const newVideoTrack = newStream.getVideoTracks()[0];
             if (newVideoTrack) {
+                // Remove old video track and add new one
+                const oldTracks = this.localStream.getVideoTracks();
+                oldTracks.forEach(track => this.localStream.removeTrack(track));
+                
                 this.localStream.addTrack(newVideoTrack);
                 this.localVideo.srcObject = this.localStream;
                 
@@ -631,11 +705,29 @@ class VideoCallApp {
                 setTimeout(() => {
                     this.cameraSwitchBtn.classList.remove('camera-switched');
                 }, 1000);
+                
+                console.log('Kamera başarıyla değiştirildi');
+                
+            } else {
+                throw new Error('Yeni video track bulunamadı');
             }
             
         } catch (error) {
             console.error('Kamera değiştirme hatası:', error);
-            alert('Kamera değiştirilemedi. Sadece bir kamera mevcut olabilir.');
+            
+            // Revert camera facing mode on error
+            this.currentCameraFacing = this.currentCameraFacing === 'user' ? 'environment' : 'user';
+            
+            let errorMessage = 'Kamera değiştirilemedi. ';
+            if (error.message.includes('Sadece bir kamera mevcut')) {
+                errorMessage += 'Bu cihazda sadece bir kamera mevcut.';
+            } else if (error.message.includes('Alternatif kamera bulunamadı')) {
+                errorMessage += 'Alternatif kamera bulunamadı.';
+            } else {
+                errorMessage += 'Teknik bir hata oluştu.';
+            }
+            
+            alert(errorMessage);
         }
     }
     
@@ -722,6 +814,29 @@ class VideoCallApp {
         if (this.roomId) {
             this.chatMessages.classList.add('room-specific');
             this.chatMessages.setAttribute('data-room-id', this.roomId);
+        }
+    }
+    
+    async checkCameraAvailability() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
+            console.log('Mevcut kameralar:', videoDevices.length);
+            
+            if (videoDevices.length > 1) {
+                this.cameraSwitchBtn.disabled = false;
+                this.cameraSwitchBtn.style.display = 'inline-block';
+                console.log('Kamera değiştirme butonu aktif');
+            } else {
+                this.cameraSwitchBtn.disabled = true;
+                this.cameraSwitchBtn.style.display = 'none';
+                console.log('Sadece bir kamera mevcut, değiştirme butonu gizli');
+            }
+        } catch (error) {
+            console.error('Kamera kontrolü hatası:', error);
+            this.cameraSwitchBtn.disabled = true;
+            this.cameraSwitchBtn.style.display = 'none';
         }
     }
 }
