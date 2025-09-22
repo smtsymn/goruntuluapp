@@ -68,11 +68,17 @@ class VideoCallApp {
     
     setupEventListeners() {
         this.startBtn.addEventListener('click', () => this.startCall());
-        this.endBtn.addEventListener('click', () => this.endCall());
+        this.endBtn.addEventListener('click', () => {
+            if (this.roomId && this.socket) {
+                this.socket.emit('end-call', { roomId: this.roomId });
+            }
+            this.endCall();
+        });
         this.muteBtn.addEventListener('click', () => this.toggleMute());
         this.videoBtn.addEventListener('click', () => this.toggleVideo());
         this.cameraSwitchBtn.addEventListener('click', () => this.switchCamera());
-        this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen('local'));
+        // Always fullscreen remote video (own video will appear as mini preview)
+        this.fullscreenBtn.addEventListener('click', () => this.toggleFullscreen('remote'));
         this.remoteFullscreenBtn.addEventListener('click', () => this.toggleFullscreen('remote'));
         this.exitFullscreenBtn.addEventListener('click', () => this.exitFullscreen());
         this.retryBtn.addEventListener('click', () => this.retryPermissions());
@@ -186,6 +192,12 @@ class VideoCallApp {
         this.socket.on('chat-message', (data) => {
             console.log('Chat mesajı alındı:', data.message);
             this.displayMessage(data.message, 'other');
+        });
+
+        // Remote requested to end the call
+        this.socket.on('remote-end-call', () => {
+            this.updateStatus('Karşı taraf görüşmeyi sonlandırdı', 'disconnected');
+            this.endCall();
         });
     }
     

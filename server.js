@@ -110,6 +110,13 @@ io.on('connection', (socket) => {
         console.log(`Chat mesajı gönderildi: ${roomId}`);
     });
 
+    // End call - either participant can end for both
+    socket.on('end-call', (data) => {
+        const { roomId } = data;
+        socket.to(roomId).emit('remote-end-call');
+        console.log(`Görüşme sonlandırıldı: ${roomId}`);
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log('Kullanıcı bağlantısı kesildi:', socket.id);
